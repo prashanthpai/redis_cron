@@ -1,0 +1,14 @@
+[package]
+name = "redis_cron"
+version = "0.1.0"
+authors = ["Prashanth Pai <mail@ppai.me>"]
+edition = "2018"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+lazy_static = "1.4.0"
+job_scheduler = { git = "https://github.com/prashanthpai/job_scheduler", branch = "master" }
+redis-module = { git = "https://github.com/prashanthpai/redismodule-rs", branch = "add-hash-del-single", features = ["experimental-api"] }
