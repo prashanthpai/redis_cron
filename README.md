@@ -90,7 +90,4 @@ schedule of `0 0 6 * * Sun,Sat` would execute at 6am on Sunday and Saturday.
 
 ### Reference
 
-This project uses:
-
-* [job_scheduler](github.com/lholden/job_scheduler)
-* [redismodule-rs](https://github.com/RedisLabsModules/redismodule-rs)
+This project uses makes use of [redismodule-rs](https://github.com/RedisLabsModules/redismodule-rs)

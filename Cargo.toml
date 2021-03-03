@@ -10,5 +10,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 lazy_static = "1.4.0"
-job_scheduler = { git = "https://github.com/prashanthpai/job_scheduler", branch = "master" }
-redis-module = { git = "https://github.com/prashanthpai/redismodule-rs", branch = "add-hash-del-single", features = ["experimental-api"] }
+cron = "~0.8"
+chrono = "~0.4"
+uuid = { version = "~0.8", features = ["v4"] }
+# redis-module = { git = "https://github.com/prashanthpai/redismodule-rs", branch = "add-hash-del-single", features = ["experimental-api"] }
+redis-module = { path = "../../src/redismodule-rs", branch = "add-hash-del-single", features = ["experimental-api"] }

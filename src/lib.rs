@@ -1,12 +1,15 @@
 #[macro_use]
 extern crate redis_module;
 
-use job_scheduler::{Job, JobScheduler, Uuid};
 use lazy_static::lazy_static;
 use redis_module::{Context, RedisError, RedisResult, Status, ThreadSafeContext};
 use std::mem::drop;
 use std::sync::Mutex;
 use std::{thread, time};
+
+//use crate::job_scheduler;
+mod job_scheduler;
+use crate::job_scheduler::{Job, JobScheduler, Uuid};
 
 const CRON_JOB_EXPR_KEY: &str = "redis_cron::jobid_expr";
 const CRON_JOB_CMD_KEY: &str = "redis_cron::jobid_cmd";
@@ -29,14 +32,7 @@ fn cron_schedule(ctx: &Context, args: Vec<String>) -> RedisResult {
     let job_id = SCHED
         .lock()
         .unwrap()
-        .add(Job::new(cron_expr.parse().unwrap(), move || {
-            // convert to Vec<String> to &[&str]
-            let eval_args: Vec<&str> = args[3..].iter().map(|s| &s[..]).collect();
-            let thread_ctx = ThreadSafeContext::new();
-            let tctx = thread_ctx.lock();
-            tctx.call(&redis_cmd, &eval_args).unwrap();
-            drop(tctx);
-        }))
+        .add(Job::new(cron_expr.parse().unwrap(), || {}, args))
         .to_string();
 
     let expr_key = ctx.open_key_writable(CRON_JOB_EXPR_KEY);
@@ -54,10 +50,10 @@ fn cron_unschedule(ctx: &Context, args: Vec<String>) -> RedisResult {
     }
 
     let expr_key = ctx.open_key_writable(CRON_JOB_EXPR_KEY);
-    expr_key.hash_del_single(&args[1]);
+    expr_key.hash_del(&args[1]);
 
     let cmd_key = ctx.open_key_writable(CRON_JOB_CMD_KEY);
-    cmd_key.hash_del_single(&args[1]);
+    cmd_key.hash_del(&args[1]);
 
     SCHED.lock().unwrap().remove(Uuid::parse_str(&args[1])?);
 
