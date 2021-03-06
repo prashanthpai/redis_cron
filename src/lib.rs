@@ -3,16 +3,19 @@ extern crate redis_module;
 
 use lazy_static::lazy_static;
 use redis_module::{Context, RedisError, RedisResult, RedisValue, Status};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::{thread, time};
 
 mod job_scheduler;
 use crate::job_scheduler::{Job, JobScheduler, Uuid};
 
+static mut TICK_THREAD: Option<thread::JoinHandle<()>> = None;
 const SCHED_SLEEP_MS: u64 = 500;
 
 lazy_static! {
     static ref SCHED: Mutex<JobScheduler> = Mutex::new(JobScheduler::new());
+    static ref TICK_STOP: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
 }
 
 fn cron_schedule(ctx: &Context, args: Vec<String>) -> RedisResult {
@@ -66,22 +69,38 @@ fn cron_list(ctx: &Context, args: Vec<String>) -> RedisResult {
     return Ok(RedisValue::Array(response.into()));
 }
 
-fn init(_: &Context, _: &Vec<String>) -> Status {
+fn init(_ctx: &Context, _: &Vec<String>) -> Status {
     // TODO:
     // at startup, read from stored hashsets and add to scheduler
     // but it requires some parsing
 
-    thread::spawn(move || loop {
-        SCHED.lock().unwrap().tick();
-        thread::sleep(time::Duration::from_millis(SCHED_SLEEP_MS));
-    });
+    let should_stop = TICK_STOP.clone();
+    unsafe {
+        TICK_THREAD = Some(thread::spawn(move || loop {
+            SCHED.lock().unwrap().tick();
+            if should_stop.load(Ordering::SeqCst) {
+                return;
+            }
+            thread::sleep(time::Duration::from_millis(SCHED_SLEEP_MS));
+        }));
+    }
 
     Status::Ok
 }
 
-fn deinit(_: &Context) -> Status {
-    // TODO:
-    // gracefully stop the thread started in init()
+fn deinit(ctx: &Context) -> Status {
+    TICK_STOP.store(true, Ordering::SeqCst);
+    ctx.log_notice("redis_cron: sginalled tick thread to stop");
+
+    ctx.log_notice("redis_cron: waiting for tick thread to stop");
+    unsafe {
+        match TICK_THREAD.take().unwrap().join() {
+            Ok(_) => ctx.log_notice("redis_cron: tick thread stopped gracefully"),
+            Err(_) => ctx.log_warning("redis_cron: tick thread panicked"),
+        }
+        TICK_THREAD = None;
+    }
+    TICK_STOP.store(false, Ordering::SeqCst);
 
     Status::Ok
 }
