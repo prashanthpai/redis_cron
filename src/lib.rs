@@ -47,6 +47,25 @@ fn cron_unschedule(ctx: &Context, args: Vec<String>) -> RedisResult {
     return Ok(RedisValue::Integer(present.into()));
 }
 
+fn cron_list(ctx: &Context, args: Vec<String>) -> RedisResult {
+    if args.len() != 1 {
+        return Err(RedisError::WrongArity);
+    }
+    ctx.auto_memory();
+
+    let jobs = SCHED.lock().unwrap().jobs_list();
+    let mut response = Vec::with_capacity(jobs.len());
+    for job in jobs {
+        response.push(RedisValue::Array(vec![
+            RedisValue::SimpleString(job.job_id.into()),
+            RedisValue::SimpleString(job.schedule.into()),
+            RedisValue::SimpleString(job.cmd_args.into()),
+        ]))
+    }
+
+    return Ok(RedisValue::Array(response.into()));
+}
+
 fn init(_: &Context, _: &Vec<String>) -> Status {
     // TODO:
     // at startup, read from stored hashsets and add to scheduler
@@ -76,5 +95,6 @@ redis_module! {
     commands: [
         ["cron.schedule", cron_schedule, "write deny-oom", 0, 0, 0],
         ["cron.unschedule", cron_unschedule, "write deny-oom", 0, 0, 0],
+        ["cron.list", cron_list, "readonly", 0, 0, 0],
     ],
 }

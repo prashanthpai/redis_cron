@@ -15,6 +15,12 @@ pub struct Job {
     last_tick: Option<DateTime<Utc>>,
 }
 
+pub struct JobStr {
+    pub job_id: String,
+    pub schedule: String,
+    pub cmd_args: String,
+}
+
 impl Job {
     pub fn new(schedule: Schedule, args: Vec<String>) -> Job {
         Job {
@@ -115,6 +121,19 @@ impl JobScheduler {
         for job in &mut self.jobs {
             job.tick();
         }
+    }
+
+    pub fn jobs_list(&self) -> Vec<JobStr> {
+        let mut res = Vec::with_capacity(self.jobs.len());
+        for job in &self.jobs {
+            res.push(JobStr {
+                job_id: job.job_id.to_string(),
+                schedule: job.schedule.to_string(),
+                cmd_args: job.cmd_args.join(" ").to_string(),
+            })
+        }
+
+        return res;
     }
 
     #[allow(dead_code)]

@@ -8,8 +8,6 @@ PostgreSQL extension [pg_cron](https://github.com/citusdata/pg_cron).
 redis_cron runs scheduled jobs sequentially in a single thread since redis
 commands can only be run by one thread at a time inside redis.
 
-NOTE: This project is experimental and not complete yet.
-
 ## Install
 
 ```sh
@@ -27,41 +25,53 @@ Available commands:
 ```
 CRON.SCHEDULE <cron-expression> <redis-command>
 CRON.UNSCHEDULE <job-id>
+CRON.LIST
 ```
 
 **Example**
 
-Run some redis command every 10 seconds:
-
 ```
 $ redis-cli
-127.0.0.1:6379> CRON.SCHEDULE "1/10 * * * * *" HINCRBY myhash field 1
-"c5e68b53-e969-4280-bcef-21703def0994"
-127.0.0.1:6379> HGETALL myhash
+127.0.0.1:6379> CRON.SCHEDULE "1/10 * * * * *" EVAL "return redis.call('set','foo','bar')" 0
+"f04fefb1-ebf1-4d47-a582-f04963df994b"
+127.0.0.1:6379> CRON.SCHEDULE "1/5 * * * * *" HINCRBY myhash field 1
+"be428e43-5501-4eed-83c3-2c9ef3c52f6f"
+127.0.0.1:6379> CRON.LIST
+1) 1) f04fefb1-ebf1-4d47-a582-f04963df994b
+   2) 1/10 * * * * *
+   3) EVAL return redis.call('set','foo','bar') 0
+2) 1) be428e43-5501-4eed-83c3-2c9ef3c52f6f
+   2) 1/5 * * * * *
+   3) HINCRBY myhash field 1
+127.0.0.1:6379> CRON.UNSCHEDULE be428e43-5501-4eed-83c3-2c9ef3c52f6f
+(integer) 1
+127.0.0.1:6379> CRON.LIST
+1) 1) f04fefb1-ebf1-4d47-a582-f04963df994b
+   2) 1/10 * * * * *
+   3) EVAL return redis.call('set','foo','bar') 0
+127.0.0.1:6379> CRON.UNSCHEDULE f04fefb1-ebf1-4d47-a582-f04963df994b
+(integer) 1
+127.0.0.1:6379> CRON.LIST
 (empty array)
-127.0.0.1:6379> HGETALL myhash
-1) "field"
-2) "1"
-127.0.0.1:6379> HGETALL myhash
-1) "field"
-2) "2"
-127.0.0.1:6379> CRON.UNSCHEDULE c5e68b53-e969-4280-bcef-21703def0994
-(nil)
 ```
 
-Scheduled job information is stored for future reference by users:
+Logs:
 
+```log
+66004:M 06 Mar 2021 15:33:22.814 # Server initialized
+66004:M 06 Mar 2021 15:33:22.815 * Module 'cron' loaded from ./target/debug/libredis_cron.dylib
+66004:M 06 Mar 2021 15:33:22.815 * Ready to accept connections
+66004:M 06 Mar 2021 15:34:01.462 * <module> redis_cron: run: job_id=f04fefb1-ebf1-4d47-a582-f04963df994b; schedule=1/10 * * * * *; cmd=EVAL;
+66004:M 06 Mar 2021 15:34:06.486 * <module> redis_cron: run: job_id=be428e43-5501-4eed-83c3-2c9ef3c52f6f; schedule=1/5 * * * * *; cmd=HINCRBY;
+66004:M 06 Mar 2021 15:34:11.000 * <module> redis_cron: run: job_id=f04fefb1-ebf1-4d47-a582-f04963df994b; schedule=1/10 * * * * *; cmd=EVAL;
+66004:M 06 Mar 2021 15:34:11.000 * <module> redis_cron: run: job_id=be428e43-5501-4eed-83c3-2c9ef3c52f6f; schedule=1/5 * * * * *; cmd=HINCRBY;
+66004:M 06 Mar 2021 15:34:16.017 * <module> redis_cron: run: job_id=be428e43-5501-4eed-83c3-2c9ef3c52f6f; schedule=1/5 * * * * *; cmd=HINCRBY;
+66004:M 06 Mar 2021 15:34:21.043 * <module> redis_cron: run: job_id=f04fefb1-ebf1-4d47-a582-f04963df994b; schedule=1/10 * * * * *; cmd=EVAL;
+66004:M 06 Mar 2021 15:34:21.043 * <module> redis_cron: run: job_id=be428e43-5501-4eed-83c3-2c9ef3c52f6f; schedule=1/5 * * * * *; cmd=HINCRBY;
+66004:M 06 Mar 2021 15:34:26.069 * <module> redis_cron: run: job_id=be428e43-5501-4eed-83c3-2c9ef3c52f6f; schedule=1/5 * * * * *; cmd=HINCRBY;
+66004:M 06 Mar 2021 15:34:31.086 * <module> redis_cron: run: job_id=f04fefb1-ebf1-4d47-a582-f04963df994b; schedule=1/10 * * * * *; cmd=EVAL;
+66004:M 06 Mar 2021 15:34:41.116 * <module> redis_cron: run: job_id=f04fefb1-ebf1-4d47-a582-f04963df994b; schedule=1/10 * * * * *; cmd=EVAL;
 ```
-127.0.0.1:6379> HGETALL redis_cron::jobid_expr
-1) "2605b43a-ee81-4a34-a147-8e4cdc016709"
-2) "1/10 * * * * *"
-127.0.0.1:6379> HGETALL redis_cron::jobid_cmd
-1) "2605b43a-ee81-4a34-a147-8e4cdc016709"
-2) "HINCRBY myhash field 1"
-127.0.0.1:6379>
-```
-
-The above keys are only for reference and not (yet) used to load and run jobs.
 
 ## Cron expression syntax
 
