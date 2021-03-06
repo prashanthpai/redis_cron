@@ -9,8 +9,6 @@ use std::{thread, time};
 mod job_scheduler;
 use crate::job_scheduler::{Job, JobScheduler, Uuid};
 
-const CRON_JOB_EXPR_KEY: &str = "redis_cron::jobid_expr";
-const CRON_JOB_CMD_KEY: &str = "redis_cron::jobid_cmd";
 const SCHED_SLEEP_MS: u64 = 500;
 
 lazy_static! {
@@ -21,21 +19,13 @@ fn cron_schedule(ctx: &Context, args: Vec<String>) -> RedisResult {
     if args.len() < 3 {
         return Err(RedisError::WrongArity);
     }
-
-    let cron_expr = args[1].clone();
-    let cron_cmd = args[2..].join(" ");
+    ctx.auto_memory();
 
     let job_id = SCHED
         .lock()
         .unwrap()
-        .add(Job::new(cron_expr.parse().unwrap(), args))
+        .add(Job::new(args[1].parse()?, args[2..].to_vec()))
         .to_string();
-
-    let expr_key = ctx.open_key_writable(CRON_JOB_EXPR_KEY);
-    expr_key.hash_set(&job_id, ctx.create_string(&cron_expr));
-
-    let cmd_key = ctx.open_key_writable(CRON_JOB_CMD_KEY);
-    cmd_key.hash_set(&job_id, ctx.create_string(&cron_cmd));
 
     return Ok(job_id.into());
 }
@@ -44,12 +34,7 @@ fn cron_unschedule(ctx: &Context, args: Vec<String>) -> RedisResult {
     if args.len() != 2 {
         return Err(RedisError::WrongArity);
     }
-
-    let expr_key = ctx.open_key_writable(CRON_JOB_EXPR_KEY);
-    expr_key.hash_del(&args[1]);
-
-    let cmd_key = ctx.open_key_writable(CRON_JOB_CMD_KEY);
-    cmd_key.hash_del(&args[1]);
+    ctx.auto_memory();
 
     let job_id = match Uuid::parse_str(&args[1]) {
         Ok(v) => v,

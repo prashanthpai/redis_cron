@@ -1,7 +1,6 @@
 //! This is forked from https://github.com/lholden/job_scheduler
 
 extern crate redis_module;
-
 use redis_module::ThreadSafeContext;
 
 use chrono::{offset, DateTime, Duration, Utc};
@@ -9,29 +8,33 @@ pub use cron::Schedule;
 pub use uuid::Uuid;
 
 pub struct Job {
-    schedule: Schedule,
-    last_tick: Option<DateTime<Utc>>,
-    limit_missed_runs: usize,
     job_id: Uuid,
-    args: Vec<String>,
+    schedule: Schedule,
+    cmd_args: Vec<String>,
+    limit_missed_runs: usize,
+    last_tick: Option<DateTime<Utc>>,
 }
 
 impl Job {
     pub fn new(schedule: Schedule, args: Vec<String>) -> Job {
         Job {
-            schedule,
-            last_tick: None,
-            limit_missed_runs: 1,
             job_id: Uuid::new_v4(),
-            args: args,
+            schedule,
+            cmd_args: args,
+            limit_missed_runs: 1,
+            last_tick: None,
         }
     }
 
     fn run(&self) {
-        let eval_args: Vec<&str> = self.args[3..].iter().map(|s| &s[..]).collect();
-        let thread_ctx = ThreadSafeContext::new();
-        let tctx = thread_ctx.lock();
-        tctx.call(&self.args[2], &eval_args).unwrap();
+        let args: Vec<&str> = self.cmd_args[1..].iter().map(|s| &s[..]).collect();
+        let ctx = ThreadSafeContext::new();
+        let tctx = ctx.lock();
+        tctx.log_notice(&format!(
+            "redis_cron: run: job_id={}; schedule={}; cmd={};",
+            self.job_id, self.schedule, self.cmd_args[0]
+        ));
+        tctx.call(&self.cmd_args[0], &args).unwrap();
     }
 
     fn tick(&mut self) {
