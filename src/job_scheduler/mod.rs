@@ -32,7 +32,6 @@ impl Job {
         let thread_ctx = ThreadSafeContext::new();
         let tctx = thread_ctx.lock();
         tctx.call(&self.args[2], &eval_args).unwrap();
-        drop(tctx);
     }
 
     fn tick(&mut self) {
@@ -121,6 +120,7 @@ impl JobScheduler {
             // Take a guess if there are no jobs.
             return std::time::Duration::from_millis(500);
         }
+
         let mut duration = Duration::zero();
         let now = Utc::now();
         for job in self.jobs.iter() {
@@ -131,6 +131,7 @@ impl JobScheduler {
                 }
             }
         }
+
         duration.to_std().unwrap()
     }
 }

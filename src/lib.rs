@@ -2,7 +2,7 @@
 extern crate redis_module;
 
 use lazy_static::lazy_static;
-use redis_module::{Context, RedisError, RedisResult, Status};
+use redis_module::{Context, RedisError, RedisResult, RedisValue, Status};
 use std::sync::Mutex;
 use std::{thread, time};
 
@@ -51,9 +51,15 @@ fn cron_unschedule(ctx: &Context, args: Vec<String>) -> RedisResult {
     let cmd_key = ctx.open_key_writable(CRON_JOB_CMD_KEY);
     cmd_key.hash_del(&args[1]);
 
-    SCHED.lock().unwrap().remove(Uuid::parse_str(&args[1])?);
+    let job_id = match Uuid::parse_str(&args[1]) {
+        Ok(v) => v,
+        // return 0 if UUID is invalid
+        Err(_err) => return Ok(RedisValue::Integer(false.into())),
+    };
 
-    return Ok(().into());
+    let present = SCHED.lock().unwrap().remove(job_id);
+
+    return Ok(RedisValue::Integer(present.into()));
 }
 
 fn init(_: &Context, _: &Vec<String>) -> Status {
