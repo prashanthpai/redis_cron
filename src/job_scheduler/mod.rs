@@ -2,36 +2,37 @@
 
 extern crate redis_module;
 
-use redis_module::{Context, RedisError, RedisResult, Status, ThreadSafeContext};
+use redis_module::ThreadSafeContext;
 
 use chrono::{offset, DateTime, Duration, Utc};
 pub use cron::Schedule;
-use std::mem::drop;
 pub use uuid::Uuid;
 
-pub struct Job<'a> {
+pub struct Job {
     schedule: Schedule,
-    run: Box<dyn (FnMut() -> ()) + Send + Sync + 'a>,
     last_tick: Option<DateTime<Utc>>,
     limit_missed_runs: usize,
     job_id: Uuid,
     args: Vec<String>,
 }
 
-impl<'a> Job<'a> {
-    pub fn new<T>(schedule: Schedule, run: T, args: Vec<String>) -> Job<'a>
-    where
-        T: 'a,
-        T: FnMut() -> () + Send + Sync,
-    {
+impl Job {
+    pub fn new(schedule: Schedule, args: Vec<String>) -> Job {
         Job {
             schedule,
-            run: Box::new(run),
             last_tick: None,
             limit_missed_runs: 1,
             job_id: Uuid::new_v4(),
             args: args,
         }
+    }
+
+    fn run(&self) {
+        let eval_args: Vec<&str> = self.args[3..].iter().map(|s| &s[..]).collect();
+        let thread_ctx = ThreadSafeContext::new();
+        let tctx = thread_ctx.lock();
+        tctx.call(&self.args[2], &eval_args).unwrap();
+        drop(tctx);
     }
 
     fn tick(&mut self) {
@@ -40,6 +41,7 @@ impl<'a> Job<'a> {
             self.last_tick = Some(now);
             return;
         }
+
         if self.limit_missed_runs > 0 {
             for event in self
                 .schedule
@@ -49,48 +51,42 @@ impl<'a> Job<'a> {
                 if event > now {
                     break;
                 }
-                let eval_args: Vec<&str> = self.args[3..].iter().map(|s| &s[..]).collect();
-                let thread_ctx = ThreadSafeContext::new();
-                let tctx = thread_ctx.lock();
-                tctx.call(&self.args[2], &eval_args).unwrap();
-                drop(tctx);
+                self.run();
             }
         } else {
             for event in self.schedule.after(&self.last_tick.unwrap()) {
                 if event > now {
                     break;
                 }
-                let eval_args: Vec<&str> = self.args[3..].iter().map(|s| &s[..]).collect();
-                let thread_ctx = ThreadSafeContext::new();
-                let tctx = thread_ctx.lock();
-                tctx.call(&self.args[2], &eval_args).unwrap();
-                drop(tctx);
+                self.run();
             }
         }
 
         self.last_tick = Some(now);
     }
 
+    #[allow(dead_code)]
     pub fn limit_missed_runs(&mut self, limit: usize) {
         self.limit_missed_runs = limit;
     }
 
+    #[allow(dead_code)]
     pub fn last_tick(&mut self, last_tick: Option<DateTime<Utc>>) {
         self.last_tick = last_tick;
     }
 }
 
 #[derive(Default)]
-pub struct JobScheduler<'a> {
-    jobs: Vec<Job<'a>>,
+pub struct JobScheduler {
+    jobs: Vec<Job>,
 }
 
-impl<'a> JobScheduler<'a> {
-    pub fn new() -> JobScheduler<'a> {
+impl JobScheduler {
+    pub fn new() -> JobScheduler {
         JobScheduler { jobs: Vec::new() }
     }
 
-    pub fn add(&mut self, job: Job<'a>) -> Uuid {
+    pub fn add(&mut self, job: Job) -> Uuid {
         let job_id = job.job_id;
         self.jobs.push(job);
 
@@ -119,6 +115,7 @@ impl<'a> JobScheduler<'a> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn time_till_next_job(&self) -> std::time::Duration {
         if self.jobs.is_empty() {
             // Take a guess if there are no jobs.

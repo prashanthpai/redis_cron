@@ -2,12 +2,10 @@
 extern crate redis_module;
 
 use lazy_static::lazy_static;
-use redis_module::{Context, RedisError, RedisResult, Status, ThreadSafeContext};
-use std::mem::drop;
+use redis_module::{Context, RedisError, RedisResult, Status};
 use std::sync::Mutex;
 use std::{thread, time};
 
-//use crate::job_scheduler;
 mod job_scheduler;
 use crate::job_scheduler::{Job, JobScheduler, Uuid};
 
@@ -16,8 +14,7 @@ const CRON_JOB_CMD_KEY: &str = "redis_cron::jobid_cmd";
 const SCHED_SLEEP_MS: u64 = 500;
 
 lazy_static! {
-    // am I doing this right in rust?
-    static ref SCHED: Mutex<JobScheduler<'static>> = Mutex::new(JobScheduler::new());
+    static ref SCHED: Mutex<JobScheduler> = Mutex::new(JobScheduler::new());
 }
 
 fn cron_schedule(ctx: &Context, args: Vec<String>) -> RedisResult {
@@ -27,12 +24,11 @@ fn cron_schedule(ctx: &Context, args: Vec<String>) -> RedisResult {
 
     let cron_expr = args[1].clone();
     let cron_cmd = args[2..].join(" ");
-    let redis_cmd = args[2].clone();
 
     let job_id = SCHED
         .lock()
         .unwrap()
-        .add(Job::new(cron_expr.parse().unwrap(), || {}, args))
+        .add(Job::new(cron_expr.parse().unwrap(), args))
         .to_string();
 
     let expr_key = ctx.open_key_writable(CRON_JOB_EXPR_KEY);
