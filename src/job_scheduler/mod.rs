@@ -37,7 +37,7 @@ impl Job {
         let ctx = ThreadSafeContext::new();
         let tctx = ctx.lock();
         tctx.log_notice(&format!(
-            "redis_cron: run: job_id={}; schedule={}; cmd={};",
+            "<cron> run: job_id={}; schedule={}; cmd={};",
             self.job_id, self.schedule, self.cmd_args[0]
         ));
         tctx.call(&self.cmd_args[0], &args).unwrap();
@@ -117,13 +117,11 @@ impl JobScheduler {
         found_index.is_some()
     }
 
-    pub fn tick(&mut self) {
-        for job in &mut self.jobs {
-            job.tick();
-        }
+    pub fn clear_jobs(&mut self) {
+        self.jobs.clear()
     }
 
-    pub fn jobs_list(&self) -> Vec<JobStr> {
+    pub fn list_jobs(&self) -> Vec<JobStr> {
         let mut res = Vec::with_capacity(self.jobs.len());
         for job in &self.jobs {
             res.push(JobStr {
@@ -134,6 +132,12 @@ impl JobScheduler {
         }
 
         return res;
+    }
+
+    pub fn tick(&mut self) {
+        for job in &mut self.jobs {
+            job.tick();
+        }
     }
 
     #[allow(dead_code)]
