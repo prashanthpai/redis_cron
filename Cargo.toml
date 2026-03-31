@@ -9,8 +9,8 @@ license = "MIT"
 crate-type = ["cdylib"]
 
 [dependencies]
-lazy_static = "1.4.0"
-cron = "~0.8"
-chrono = "~0.4"
-uuid = { version = "~0.8", features = ["v4"] }
-redis-module = { git="https://github.com/RedisLabsModules/redismodule-rs", features = ["experimental-api"]}
+lazy_static = "1.5.0"
+cron = "0.16.0"
+chrono = "0.4.44"
+uuid = { version = "1.23.0", features = ["v4"] }
+redis-module = { git = "https://github.com/RedisLabsModules/redismodule-rs", tag = "v2.1.3" }

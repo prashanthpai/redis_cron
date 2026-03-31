@@ -1,7 +1,7 @@
 //! This is forked from https://github.com/lholden/job_scheduler
 
 extern crate redis_module;
-use redis_module::ThreadSafeContext;
+use redis_module::{RedisError, ThreadSafeContext};
 
 use chrono::{offset, DateTime, Duration, Utc};
 pub use cron::Schedule;
@@ -10,67 +10,76 @@ pub use uuid::Uuid;
 pub struct Job {
     job_id: Uuid,
     schedule: Schedule,
-    cmd_args: Vec<String>,
+    command: String,
+    args: Vec<Vec<u8>>,
     limit_missed_runs: usize,
     last_tick: Option<DateTime<Utc>>,
 }
 
-pub struct JobStr {
+pub struct JobInfo {
     pub job_id: String,
     pub schedule: String,
-    pub cmd_args: String,
+    pub command: String,
+    pub args: Vec<Vec<u8>>,
+}
+
+pub struct PendingRun {
+    job_id: String,
+    schedule: String,
+    command: String,
+    args: Vec<Vec<u8>>,
 }
 
 impl Job {
-    pub fn new(schedule: Schedule, args: Vec<String>) -> Job {
+    pub fn new(schedule: Schedule, command: String, args: Vec<Vec<u8>>) -> Job {
         Job {
             job_id: Uuid::new_v4(),
             schedule,
-            cmd_args: args,
+            command,
+            args,
             limit_missed_runs: 1,
             last_tick: None,
         }
     }
 
-    fn run(&self) {
-        let args: Vec<&str> = self.cmd_args[1..].iter().map(|s| &s[..]).collect();
-        let ctx = ThreadSafeContext::new();
-        let tctx = ctx.lock();
-        tctx.log_notice(&format!(
-            "<cron> run: job_id={}; schedule={}; cmd={};",
-            self.job_id, self.schedule, self.cmd_args[0]
-        ));
-        tctx.call(&self.cmd_args[0], &args).unwrap();
+    fn pending_run(&self) -> PendingRun {
+        PendingRun {
+            job_id: self.job_id.to_string(),
+            schedule: self.schedule.to_string(),
+            command: self.command.clone(),
+            args: self.args.clone(),
+        }
     }
 
-    fn tick(&mut self) {
-        let now = Utc::now();
-        if self.last_tick.is_none() {
-            self.last_tick = Some(now);
-            return;
-        }
+    fn collect_due_runs(&mut self, now: DateTime<Utc>) -> Vec<PendingRun> {
+        let mut due_runs = Vec::new();
+        let last_tick = match self.last_tick {
+            Some(last_tick) => last_tick,
+            None => {
+                self.last_tick = Some(now);
+                return due_runs;
+            }
+        };
 
         if self.limit_missed_runs > 0 {
-            for event in self
-                .schedule
-                .after(&self.last_tick.unwrap())
-                .take(self.limit_missed_runs)
-            {
+            for event in self.schedule.after(&last_tick).take(self.limit_missed_runs) {
                 if event > now {
                     break;
                 }
-                self.run();
+                due_runs.push(self.pending_run());
             }
         } else {
-            for event in self.schedule.after(&self.last_tick.unwrap()) {
+            for event in self.schedule.after(&last_tick) {
                 if event > now {
                     break;
                 }
-                self.run();
+                due_runs.push(self.pending_run());
             }
         }
 
         self.last_tick = Some(now);
+
+        due_runs
     }
 
     #[allow(dead_code)]
@@ -81,6 +90,26 @@ impl Job {
     #[allow(dead_code)]
     pub fn last_tick(&mut self, last_tick: Option<DateTime<Utc>>) {
         self.last_tick = last_tick;
+    }
+}
+
+impl PendingRun {
+    pub fn run(&self) -> Result<(), RedisError> {
+        let args: Vec<&[u8]> = self.args.iter().map(|arg| arg.as_slice()).collect();
+        let ctx = ThreadSafeContext::new();
+        let tctx = ctx.lock();
+        tctx.log_notice(&format!(
+            "<cron> run: job_id={}; schedule={}; cmd={};",
+            self.job_id, self.schedule, self.command
+        ));
+        let result = tctx.call(&self.command, args.as_slice()).map(|_| ());
+        if let Err(err) = &result {
+            tctx.log_warning(&format!(
+                "<cron> job failed: job_id={}; schedule={}; cmd={}; err={};",
+                self.job_id, self.schedule, self.command, err
+            ));
+        }
+        result
     }
 }
 
@@ -121,23 +150,28 @@ impl JobScheduler {
         self.jobs.clear()
     }
 
-    pub fn list_jobs(&self) -> Vec<JobStr> {
+    pub fn list_jobs(&self) -> Vec<JobInfo> {
         let mut res = Vec::with_capacity(self.jobs.len());
         for job in &self.jobs {
-            res.push(JobStr {
+            res.push(JobInfo {
                 job_id: job.job_id.to_string(),
                 schedule: job.schedule.to_string(),
-                cmd_args: job.cmd_args.join(" ").to_string(),
+                command: job.command.clone(),
+                args: job.args.clone(),
             })
         }
 
         return res;
     }
 
-    pub fn tick(&mut self) {
+    pub fn take_due_runs(&mut self) -> Vec<PendingRun> {
+        let now = Utc::now();
+        let mut due_runs = Vec::new();
         for job in &mut self.jobs {
-            job.tick();
+            due_runs.extend(job.collect_due_runs(now));
         }
+
+        due_runs
     }
 
     #[allow(dead_code)]

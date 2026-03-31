@@ -28,6 +28,9 @@ CRON.UNSCHEDULE <job-id>
 CRON.LIST
 ```
 
+`CRON.LIST` returns each scheduled job as `[job-id, cron-expression, [command, arg1, arg2, ...]]`
+so command arguments can be preserved as raw Redis bulk strings instead of being coerced into UTF-8 text.
+
 **Example**
 
 ```
@@ -39,16 +42,23 @@ $ redis-cli
 127.0.0.1:6379> CRON.LIST
 1) 1) f04fefb1-ebf1-4d47-a582-f04963df994b
    2) 1/10 * * * * *
-   3) EVAL return redis.call('set','foo','bar') 0
+   3) 1) EVAL
+      2) return redis.call('set','foo','bar')
+      3) 0
 2) 1) be428e43-5501-4eed-83c3-2c9ef3c52f6f
    2) 1/5 * * * * *
-   3) HINCRBY myhash field 1
+   3) 1) HINCRBY
+      2) myhash
+      3) field
+      4) 1
 127.0.0.1:6379> CRON.UNSCHEDULE be428e43-5501-4eed-83c3-2c9ef3c52f6f
 (integer) 1
 127.0.0.1:6379> CRON.LIST
 1) 1) f04fefb1-ebf1-4d47-a582-f04963df994b
    2) 1/10 * * * * *
-   3) EVAL return redis.call('set','foo','bar') 0
+   3) 1) EVAL
+      2) return redis.call('set','foo','bar')
+      3) 0
 127.0.0.1:6379> CRON.UNSCHEDULE f04fefb1-ebf1-4d47-a582-f04963df994b
 (integer) 1
 127.0.0.1:6379> CRON.LIST

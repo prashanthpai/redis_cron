@@ -2,7 +2,7 @@
 extern crate redis_module;
 
 use lazy_static::lazy_static;
-use redis_module::{Context, RedisError, RedisResult, RedisValue, Status};
+use redis_module::{Context, RedisError, RedisResult, RedisString, RedisValue, Status};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::{thread, time};
@@ -10,36 +10,43 @@ use std::{thread, time};
 mod job_scheduler;
 use crate::job_scheduler::{Job, JobScheduler, Uuid};
 
-static mut TICK_THREAD: Option<thread::JoinHandle<()>> = None;
 const SCHED_SLEEP_MS: u64 = 500;
 
 lazy_static! {
     static ref SCHED: Mutex<JobScheduler> = Mutex::new(JobScheduler::new());
+    static ref TICK_THREAD: Mutex<Option<thread::JoinHandle<()>>> = Mutex::new(None);
     static ref TICK_THREAD_STOP: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
 }
 
-fn cron_schedule(ctx: &Context, args: Vec<String>) -> RedisResult {
+fn cron_schedule(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     if args.len() < 3 {
         return Err(RedisError::WrongArity);
     }
     ctx.auto_memory();
 
+    let schedule = args[1].try_as_str()?.parse()?;
+    let command = args[2].try_as_str()?.to_owned();
+    let cmd_args = args[3..]
+        .iter()
+        .map(|arg| Ok(arg.as_slice().to_vec()))
+        .collect::<Result<Vec<_>, RedisError>>()?;
+
     let job_id = SCHED
         .lock()
         .unwrap()
-        .add(Job::new(args[1].parse()?, args[2..].to_vec()))
+        .add(Job::new(schedule, command, cmd_args))
         .to_string();
 
     return Ok(job_id.into());
 }
 
-fn cron_unschedule(ctx: &Context, args: Vec<String>) -> RedisResult {
+fn cron_unschedule(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     if args.len() != 2 {
         return Err(RedisError::WrongArity);
     }
     ctx.auto_memory();
 
-    let job_id = match Uuid::parse_str(&args[1]) {
+    let job_id = match Uuid::parse_str(args[1].try_as_str()?) {
         Ok(v) => v,
         // return 0 if UUID is invalid
         Err(_err) => return Ok(RedisValue::Integer(false.into())),
@@ -50,7 +57,7 @@ fn cron_unschedule(ctx: &Context, args: Vec<String>) -> RedisResult {
     return Ok(RedisValue::Integer(present.into()));
 }
 
-fn cron_list(ctx: &Context, args: Vec<String>) -> RedisResult {
+fn cron_list(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     if args.len() != 1 {
         return Err(RedisError::WrongArity);
     }
@@ -59,17 +66,20 @@ fn cron_list(ctx: &Context, args: Vec<String>) -> RedisResult {
     let jobs = SCHED.lock().unwrap().list_jobs();
     let mut response = Vec::with_capacity(jobs.len());
     for job in jobs {
+        let mut cmd = Vec::with_capacity(job.args.len() + 1);
+        cmd.push(RedisValue::SimpleString(job.command));
+        cmd.extend(job.args.into_iter().map(RedisValue::StringBuffer));
         response.push(RedisValue::Array(vec![
             RedisValue::SimpleString(job.job_id.into()),
             RedisValue::SimpleString(job.schedule.into()),
-            RedisValue::SimpleString(job.cmd_args.into()),
+            RedisValue::Array(cmd),
         ]))
     }
 
     return Ok(RedisValue::Array(response.into()));
 }
 
-fn init(ctx: &Context, _: &Vec<String>) -> Status {
+fn init(ctx: &Context, _: &[RedisString]) -> Status {
     // TODO: load schedules and commands from stored RDB file
     // if available.
     if TICK_THREAD_STOP.load(Ordering::SeqCst) {
@@ -77,15 +87,21 @@ fn init(ctx: &Context, _: &Vec<String>) -> Status {
         return Status::Ok;
     }
 
-    unsafe {
-        TICK_THREAD = Some(thread::spawn(move || loop {
-            SCHED.lock().unwrap().tick();
-            if TICK_THREAD_STOP.load(Ordering::SeqCst) {
-                return;
-            }
-            thread::sleep(time::Duration::from_millis(SCHED_SLEEP_MS));
-        }));
-    }
+    *TICK_THREAD.lock().unwrap() = Some(thread::spawn(move || loop {
+        if TICK_THREAD_STOP.load(Ordering::SeqCst) {
+            return;
+        }
+
+        let due_runs = SCHED.lock().unwrap().take_due_runs();
+        for due_run in due_runs {
+            let _ = due_run.run();
+        }
+
+        if TICK_THREAD_STOP.load(Ordering::SeqCst) {
+            return;
+        }
+        thread::sleep(time::Duration::from_millis(SCHED_SLEEP_MS));
+    }));
     ctx.log_notice("spawned tick thread");
 
     Status::Ok
@@ -96,12 +112,11 @@ fn deinit(ctx: &Context) -> Status {
     ctx.log_notice("signalled tick thread to stop");
 
     ctx.log_notice("waiting for tick thread to stop");
-    unsafe {
-        match TICK_THREAD.take().unwrap().join() {
+    if let Some(handle) = TICK_THREAD.lock().unwrap().take() {
+        match handle.join() {
             Ok(_) => ctx.log_notice("tick thread stopped gracefully"),
             Err(_) => ctx.log_warning("tick thread panicked"),
         }
-        TICK_THREAD = None;
     }
     TICK_THREAD_STOP.store(false, Ordering::SeqCst);
 
@@ -114,12 +129,13 @@ fn deinit(ctx: &Context) -> Status {
 redis_module! {
     name: "cron",
     version: 1,
+    allocator: (redis_module::alloc::RedisAlloc, redis_module::alloc::RedisAlloc),
     data_types: [],
     init: init,
     deinit: deinit,
     commands: [
-        ["cron.schedule", cron_schedule, "write deny-oom", 0, 0, 0],
-        ["cron.unschedule", cron_unschedule, "write deny-oom", 0, 0, 0],
-        ["cron.list", cron_list, "readonly", 0, 0, 0],
+        ["cron.schedule", cron_schedule, "write deny-oom", 0, 0, 0, ""],
+        ["cron.unschedule", cron_unschedule, "write deny-oom", 0, 0, 0, ""],
+        ["cron.list", cron_list, "readonly", 0, 0, 0, ""],
     ],
 }
