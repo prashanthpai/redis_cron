@@ -37,7 +37,7 @@ fn cron_schedule(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
         .add(Job::new(schedule, command, cmd_args))
         .to_string();
 
-    return Ok(job_id.into());
+    Ok(job_id.into())
 }
 
 fn cron_unschedule(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
@@ -54,7 +54,7 @@ fn cron_unschedule(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
 
     let present = SCHED.lock().unwrap().remove(job_id);
 
-    return Ok(RedisValue::Integer(present.into()));
+    Ok(RedisValue::Integer(present.into()))
 }
 
 fn cron_list(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
@@ -70,13 +70,13 @@ fn cron_list(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
         cmd.push(RedisValue::SimpleString(job.command));
         cmd.extend(job.args.into_iter().map(RedisValue::StringBuffer));
         response.push(RedisValue::Array(vec![
-            RedisValue::SimpleString(job.job_id.into()),
-            RedisValue::SimpleString(job.schedule.into()),
+            RedisValue::SimpleString(job.job_id),
+            RedisValue::SimpleString(job.schedule),
             RedisValue::Array(cmd),
         ]))
     }
 
-    return Ok(RedisValue::Array(response.into()));
+    Ok(RedisValue::Array(response))
 }
 
 fn init(ctx: &Context, _: &[RedisString]) -> Status {
